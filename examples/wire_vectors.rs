@@ -1,0 +1,56 @@
+use percolator_prog::ix::{Instruction, BatchTradeLeg, BatchTradeCpiLeg, CrankObservationHint};
+fn hex(v: &[u8]) -> String { v.iter().map(|b| format!("{b:02x}")).collect() }
+fn main() {
+    let mut out: Vec<(&str, Vec<u8>)> = Vec::new();
+    out.push(("InitMarket", Instruction::InitMarket { max_portfolio_assets: 3u16, h_min: 4000012u64, h_max: 5000015u64, initial_price: 6000018u64, min_nonzero_mm_req: 700000000000000000000u128, min_nonzero_im_req: 800000000000000000000u128, maintenance_margin_bps: 9000027u64, initial_margin_bps: 10000030u64, max_trading_fee_bps: 11000033u64, trade_fee_base_bps: 12000036u64, liquidation_fee_bps: 13000039u64, liquidation_fee_cap: 1400000000000000000000u128, min_liquidation_abs: 1500000000000000000000u128, max_price_move_bps_per_slot: 16000048u64, max_accrual_dt_slots: 17000051u64, max_abs_funding_e9_per_slot: 18000054u64, min_funding_lifetime_slots: 19000057u64, max_account_b_settlement_chunks: 20000060u64, max_bankrupt_close_chunks: 21000063u64, max_bankrupt_close_lifetime_slots: 22000066u64, public_b_chunk_atoms: 2300000000000000000000u128, maintenance_fee_per_slot: 2400000000000000000000u128 }.encode()));
+    out.push(("InitPortfolio", Instruction::InitPortfolio.encode()));
+    out.push(("Deposit", Instruction::Deposit { portfolio_id: 3000009u64, expected_sequence: 4000012u64, amount: 500000000000000000000u128 }.encode()));
+    out.push(("Withdraw", Instruction::Withdraw { portfolio_id: 3000009u64, expected_sequence: 4000012u64, amount: 500000000000000000000u128 }.encode()));
+    out.push(("TradeNoCpi", Instruction::TradeNoCpi { account_a_portfolio_id: 3000009u64, account_a_position_epoch: 4000012u64, account_b_portfolio_id: 5000015u64, account_b_position_epoch: 6000018u64, asset_index: 7u16, market_id: 8000024u64, size_q: -90000000000000000000i128, exec_price: 10000030u64, fee_bps: 11000033u64, backing_fee_cap_bps: 12u16 }.encode()));
+    out.push(("ClosePortfolio", Instruction::ClosePortfolio { portfolio_id: 3000009u64, expected_sequence: 4000012u64, position_epoch: 5000015u64 }.encode()));
+    out.push(("TopUpInsurance", Instruction::TopUpInsurance { market_id: 3000009u64, intent_id: 4000012u64, authority_epoch: 5000015u64, amount: 600000000000000000000u128 }.encode()));
+    out.push(("TradeCpi", Instruction::TradeCpi { account_a_portfolio_id: 3000009u64, account_a_position_epoch: 4000012u64, account_b_portfolio_id: 5000015u64, account_b_position_epoch: 6000018u64, account_b_matcher_sequence: 7000021u64, asset_index: 8u16, market_id: 9000027u64, size_q: -100000000000000000000i128, fee_bps: 11000033u64, limit_price: 12000036u64, backing_fee_cap_bps: 13u16 }.encode()));
+    out.push(("CloseSlab", Instruction::CloseSlab { authority_epoch: 3000009u64 }.encode()));
+    out.push(("ResolveMarket", Instruction::ResolveMarket { asset_generation_frontier: 3000009u64, authority_epoch: 4000012u64 }.encode()));
+    out.push(("TopUpBackingBucket", Instruction::TopUpBackingBucket { domain: 3u16, market_id: 4000012u64, intent_id: 5000015u64, authority_epoch: 6000018u64, backing_fee_bps: 7u16, insurance_share_bps: 8u16, amount: 900000000000000000000u128, expiry_slot: 10000030u64 }.encode()));
+    out.push(("ConvertReleasedPnl", Instruction::ConvertReleasedPnl { portfolio_id: 3000009u64, position_epoch: 4000012u64, amount: 500000000000000000000u128 }.encode()));
+    out.push(("CloseResolved", Instruction::CloseResolved { fee_rate_per_slot: 300000000000000000000u128 }.encode()));
+    out.push(("UpdateAuthority", Instruction::UpdateAuthority { authority_epoch: 3000009u64, new_pubkey: [4u8; 32] }.encode()));
+    out.push(("ConfigureEwmaMark", Instruction::ConfigureEwmaMark { asset_index: 3u16, market_id: 4000012u64, now_slot: 5000015u64, initial_mark_e6: 6000018u64, mark_ewma_halflife_slots: 7000021u64, mark_min_fee: 8000024u64, observation_sequence: 9000027u64, authority_epoch: 10000030u64 }.encode()));
+    out.push(("PushEwmaMark", Instruction::PushEwmaMark { asset_index: 3u16, market_id: 4000012u64, now_slot: 5000015u64, mark_e6: 6000018u64, observation_sequence: 7000021u64, authority_epoch: 8000024u64 }.encode()));
+    out.push(("UpdateLiquidationFeePolicy", Instruction::UpdateLiquidationFeePolicy { cranker_share_bps: 3u16, policy_sequence: 4000012u64, authority_epoch: 5000015u64 }.encode()));
+    out.push(("ConfigurePermissionlessResolve", Instruction::ConfigurePermissionlessResolve { asset_generation_frontier: 3000009u64, stale_slots: 4000012u64, force_close_delay_slots: 5000015u64, policy_sequence: 6000018u64, authority_epoch: 7000021u64 }.encode()));
+    out.push(("ResolveStalePermissionless", Instruction::ResolveStalePermissionless { now_slot: 3000009u64 }.encode()));
+    out.push(("UpdateAssetLifecycle", Instruction::UpdateAssetLifecycle { action: 3u8, asset_index: 4u16, market_id: 5000015u64, authority_epoch: 6000018u64, now_slot: 7000021u64, initial_price: 8000024u64, max_init_fee: 900000000000000000000u128, insurance_authority: [10u8; 32], insurance_operator: [11u8; 32], backing_bucket_authority: [12u8; 32], oracle_authority: [13u8; 32] }.encode()));
+    out.push(("CureAndCancelClose", Instruction::CureAndCancelClose { portfolio_id: 3000009u64, position_epoch: 4000012u64, optional_deposit: 500000000000000000000u128 }.encode()));
+    out.push(("ForfeitRecoveryLeg", Instruction::ForfeitRecoveryLeg { portfolio_id: 3000009u64, position_epoch: 4000012u64, asset_index: 5u16, b_delta_budget: 600000000000000000000u128 }.encode()));
+    out.push(("RebalanceReduce", Instruction::RebalanceReduce { portfolio_id: 3000009u64, position_epoch: 4000012u64, asset_index: 5u16, reduce_q: 600000000000000000000u128 }.encode()));
+    out.push(("FinalizeResetSide", Instruction::FinalizeResetSide { asset_index: 3u16, side: 4u8 }.encode()));
+    out.push(("ClaimResolvedPayoutTopup", Instruction::ClaimResolvedPayoutTopup.encode()));
+    out.push(("SyncMaintenanceFee", Instruction::SyncMaintenanceFee { now_slot: 3000009u64 }.encode()));
+    out.push(("UpdateMaintenanceFeePolicy", Instruction::UpdateMaintenanceFeePolicy { cranker_share_bps: 3u16, policy_sequence: 4000012u64, authority_epoch: 5000015u64 }.encode()));
+    out.push(("WithdrawBackingBucket", Instruction::WithdrawBackingBucket { domain: 3u16, market_id: 4000012u64, authority_epoch: 5000015u64, amount: 600000000000000000000u128 }.encode()));
+    out.push(("UpdateBackingFeePolicy", Instruction::UpdateBackingFeePolicy { domain: 3u16, market_id: 4000012u64, fee_bps: 5u16, insurance_share_bps: 6u16, policy_sequence: 7000021u64, authority_epoch: 8000024u64 }.encode()));
+    out.push(("WithdrawBackingBucketEarnings", Instruction::WithdrawBackingBucketEarnings { domain: 3u16, market_id: 4000012u64, authority_epoch: 5000015u64, amount: 600000000000000000000u128 }.encode()));
+    out.push(("SyncBackingDomainLedger", Instruction::SyncBackingDomainLedger { domain: 3u16 }.encode()));
+    out.push(("SyncInsuranceLedger", Instruction::SyncInsuranceLedger.encode()));
+    out.push(("UpdateTradeFeePolicy", Instruction::UpdateTradeFeePolicy { trade_fee_base_bps: 3000009u64, policy_sequence: 4000012u64, authority_epoch: 5000015u64 }.encode()));
+    out.push(("TopUpInsuranceDomain", Instruction::TopUpInsuranceDomain { domain: 3u16, market_id: 4000012u64, intent_id: 5000015u64, authority_epoch: 6000018u64, amount: 700000000000000000000u128 }.encode()));
+    out.push(("WithdrawInsuranceAsset", Instruction::WithdrawInsuranceAsset { asset_index: 3u16, market_id: 4000012u64, authority_epoch: 5000015u64, amount: 600000000000000000000u128 }.encode()));
+    out.push(("UpdateFeeRedirectPolicy", Instruction::UpdateFeeRedirectPolicy { redirect_bps: 3u16, policy_sequence: 4000012u64, authority_epoch: 5000015u64 }.encode()));
+    out.push(("UpdateMarketInitFeePolicy", Instruction::UpdateMarketInitFeePolicy { min_init_fee: 300000000000000000000u128, policy_sequence: 4000012u64, authority_epoch: 5000015u64 }.encode()));
+    out.push(("UpdateBaseUnitMints", Instruction::UpdateBaseUnitMints { primary_mint: [3u8; 32], secondary_mint: [4u8; 32], authority_epoch: 5000015u64 }.encode()));
+    out.push(("SwapSecondaryForPrimary", Instruction::SwapSecondaryForPrimary { amount: 300000000000000000000u128, authority_epoch: 4000012u64 }.encode()));
+    out.push(("ConfigureAuthMark", Instruction::ConfigureAuthMark { asset_index: 3u16, market_id: 4000012u64, now_slot: 5000015u64, initial_mark_e6: 6000018u64, observation_sequence: 7000021u64, authority_epoch: 8000024u64 }.encode()));
+    out.push(("PushAuthMark", Instruction::PushAuthMark { asset_index: 3u16, market_id: 4000012u64, now_slot: 5000015u64, mark_e6: 6000018u64, observation_sequence: 7000021u64, authority_epoch: 8000024u64 }.encode()));
+    out.push(("ForceCloseAbandonedAsset", Instruction::ForceCloseAbandonedAsset { asset_index: 3u16, now_slot: 4000012u64, close_q: 500000000000000000000u128 }.encode()));
+    out.push(("UpdateAssetAuthority", Instruction::UpdateAssetAuthority { asset_index: 3u16, market_id: 4000012u64, authority_epoch: 5000015u64, kind: 6u8, new_pubkey: [7u8; 32] }.encode()));
+    out.push(("SetMatcherConfig", Instruction::SetMatcherConfig { portfolio_id: 3000009u64, expected_sequence: 4000012u64, position_epoch: 5000015u64, asset_generation_frontier: 6000018u64, enabled: 7u8, trade_fee_cap_bps: 8u16, expiry_slot: 9000027u64 }.encode()));
+    out.push(("RestartAssetOracle", Instruction::RestartAssetOracle { asset_index: 3u16, market_id: 4000012u64, now_slot: 5000015u64, initial_price: 6000018u64, observation_sequence: 7000021u64, authority_epoch: 8000024u64 }.encode()));
+    out.push(("CanonicalizeSpentBackingHistory", Instruction::CanonicalizeSpentBackingHistory { asset_index: 3u16, market_id: 4000012u64, authority_epoch: 5000015u64 }.encode()));
+    out.push(("PermissionlessCrank", Instruction::PermissionlessCrank { now_slot: 99, observations: vec![CrankObservationHint { asset_index: 3, oracle_accounts: 2 }, CrankObservationHint { asset_index: 7, oracle_accounts: 0 }] }.encode()));
+    out.push(("BatchTradeNoCpi", Instruction::BatchTradeNoCpi { account_a_portfolio_id: 1, account_a_position_epoch: 2, account_b_portfolio_id: 3, account_b_position_epoch: 4, legs: vec![BatchTradeLeg { asset_index: 5, market_id: 6, size_q: -7, exec_price: 8, fee_bps: 9 }, BatchTradeLeg { asset_index: 10, market_id: 11, size_q: 12, exec_price: 13, fee_bps: 14 }] }.encode()));
+    out.push(("BatchTradeCpi", Instruction::BatchTradeCpi { account_a_portfolio_id: 1, account_a_position_epoch: 2, account_b_portfolio_id: 3, account_b_position_epoch: 4, account_b_matcher_sequence: 5, max_slippage_atoms: 6, max_fee_atoms: 7, legs: vec![BatchTradeCpiLeg { asset_index: 8, market_id: 9, size_q: -10, fee_bps: 11, limit_price: 12 }] }.encode()));
+    out.push(("ConfigureHybridOracle", Instruction::ConfigureHybridOracle { asset_index: 1, market_id: 2, now_slot: 3, now_unix_ts: -4, oracle_leg_count: 3, oracle_leg_flags: 2, max_staleness_secs: 5, hybrid_soft_stale_slots: 6, mark_ewma_halflife_slots: 7, mark_min_fee: 8, invert: 1, unit_scale: 9, conf_filter_bps: 10, oracle_leg_feeds: [[1u8; 32], [2u8; 32], [3u8; 32]], observation_sequence: 11, authority_epoch: 12 }.encode()));
+    for (k, v) in out { println!("{k} {}", hex(&v)); }
+}

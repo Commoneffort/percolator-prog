@@ -2928,6 +2928,31 @@ impl V16Svm {
         )
     }
 
+    /// Tag 70 (issue #170), signed by `actor_index` as the asset's backing bucket authority.
+    pub fn canonicalize_spent_backing_history_for_actor(
+        &mut self,
+        actor_index: usize,
+        asset_index: u16,
+    ) -> Result<TxSuccess, String> {
+        let authority = copy_keypair(&self.actors[actor_index].signer);
+        let market_id = self.primary_market_state().1.assets[asset_index as usize].market_id;
+        let authority_epoch = self
+            .primary_control_sequences(asset_index as usize)
+            .authority_epoch;
+        self.send_program(
+            ProgInstruction::CanonicalizeSpentBackingHistory {
+                asset_index,
+                market_id,
+                authority_epoch,
+            },
+            vec![
+                AccountMeta::new_readonly(authority.pubkey(), true),
+                AccountMeta::new(self.market, false),
+            ],
+            &[authority],
+        )
+    }
+
     pub fn restart_asset_oracle(
         &mut self,
         asset_index: u16,

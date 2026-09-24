@@ -1734,7 +1734,7 @@ fn v16_program_wide_arithmetic_surface_is_source_complete_and_canonically_owned(
 
     const ROWS: &[ArithmeticOwner] = &[
         ArithmeticOwner { function: "accrue_asset_to_not_atomic", class: "ENGINE_HOST_FACADE", evidence: "engine-owned host serialization model" },
-        ArithmeticOwner { function: "market_view_mut", class: "STRUCTURAL", evidence: "INV-015" },
+        ArithmeticOwner { function: "market_group_view_from_state", class: "STRUCTURAL", evidence: "INV-015" },
         ArithmeticOwner { function: "market_from_wire_boxed", class: "STRUCTURAL", evidence: "INV-015" },
         ArithmeticOwner { function: "write_market_wire", class: "STRUCTURAL", evidence: "INV-025" },
         ArithmeticOwner { function: "scale_decimal_exponent_to_e6", class: "ORACLE", evidence: "v16_program_composite_epoch_coherence_crosses_all_providers_and_transforms" },
@@ -1761,6 +1761,7 @@ fn v16_program_wide_arithmetic_surface_is_source_complete_and_canonically_owned(
         ArithmeticOwner { function: "backing_domain_parts_view", class: "STRUCTURAL", evidence: "INV-034" },
         ArithmeticOwner { function: "verify_domain_withdrawal_preflight", class: "STRUCTURAL", evidence: "INV-034" },
         ArithmeticOwner { function: "handle_top_up_backing_bucket", class: "STRUCTURAL", evidence: "INV-034" },
+        ArithmeticOwner { function: "handle_canonicalize_spent_backing_history", class: "STRUCTURAL", evidence: "INV-034" },
         ArithmeticOwner { function: "handle_withdraw_insurance_asset", class: "STRUCTURAL", evidence: "INV-064" },
         ArithmeticOwner { function: "hybrid_trade_fee_quote_view", class: "COMPOSITE", evidence: "v16_attack_repeated_ewma_moves_require_catchup_and_remain_fee_covered" },
         ArithmeticOwner { function: "trade_fee_budgeted_amounts_with_mark_externality_view", class: "COMPOSITE", evidence: "v16_program_pr225_mark_movement_fee_is_nonwithdrawable_and_terminally_burned" },

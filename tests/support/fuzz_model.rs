@@ -2823,10 +2823,23 @@ fn independent_account_source_support(
             ));
         }
 
-        let valid_lien_effective = source
-            .source_lien_effective_reserved
-            .get()
-            .min(remaining_num / BOUND_SCALE);
+        // A counterparty lien whose bucket is impaired or has lapsed is impaired by spec and no
+        // longer supports risk (issue #105); insurance-backed lien reserve is unaffected.
+        let bucket = group.source_backing_buckets.get(domain).ok_or_else(|| {
+            format!("{label}: source slot {slot} names missing bucket {domain}")
+        })?;
+        let counterparty_live = bucket.status == percolator::BackingBucketStatusV16::Fresh
+            && bucket.expiry_slot > group.current_slot;
+        let supporting_effective = if counterparty_live {
+            source.source_lien_effective_reserved.get()
+        } else {
+            source
+                .source_lien_effective_reserved
+                .get()
+                .checked_sub(source.source_lien_counterparty_backing_num.get() / BOUND_SCALE)
+                .ok_or_else(|| format!("{label}: source slot {slot} lien label underflow"))?
+        };
+        let valid_lien_effective = supporting_effective.min(remaining_num / BOUND_SCALE);
         support = support
             .checked_add(valid_lien_effective)
             .ok_or_else(|| format!("{label}: valid-lien support overflow"))?;
@@ -34130,6 +34143,9 @@ fn run_forfeit_funding_order_world(
             after_reduce.assets[0].mode_short
         ));
     }
+    // Issue #205: the asset is wound down before a DrainOnly leg with live OI may forfeit.
+    env.drain_only_asset(0, 0)
+        .map_err(|error| format!("PR 273 wind down asset: {error}"))?;
     env.forfeit_recovery_leg(0, 0, u128::from(u64::MAX))
         .map_err(|error| format!("PR 273 forfeit attacker recovery leg: {error}"))?;
     env.crank_if_actionable(3, 3, zero_move_observation(&env))

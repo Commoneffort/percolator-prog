@@ -38,7 +38,9 @@ const CRANK_CU_LIMIT: u64 = 325_000;
 const CUSTODY_CU_LIMIT: u64 = 300_000;
 const TRADE_CU_LIMIT: u64 = 345_000;
 const MULTI_ASSET_OPEN_TRADE_CU_LIMIT: u64 = 750_000;
-const MATCHER_CONTEXT_LEN: usize = 320;
+// Full-size official matcher context: 320-byte base plus the per-asset inventory tail
+// (percolator_match::MATCHER_CONTEXT_LEN_FULL), so one LP can quote every portfolio asset.
+const MATCHER_CONTEXT_LEN: usize = 320 + 4 + 26 * 18;
 const MAX_10M_MARKET_SLOTS: usize = 5_782;
 const CERTIFIED_ENGINE_GIT_SOURCE: &str =
     "git+https://github.com/aeyakovenko/percolator?rev=94979ede7db934545e53a8f210dd063a9ea3ea63#\
@@ -2598,7 +2600,9 @@ impl V16CuEnv {
         maker_account: Pubkey,
         init_data: Vec<u8>,
     ) -> (Pubkey, Pubkey, u64) {
-        let ctx = Pubkey::new_unique();
+        // The official matcher requires the context account to sign its own initialization.
+        let ctx_signer = Keypair::new();
+        let ctx = ctx_signer.pubkey();
         let (_, maker_owner) = state::read_portfolio_owner_preflight(
             &self
                 .svm
@@ -2647,11 +2651,11 @@ impl V16CuEnv {
                 program_id: matcher_program,
                 accounts: vec![
                     AccountMeta::new_readonly(delegate, false),
-                    AccountMeta::new(ctx, false),
+                    AccountMeta::new(ctx, true),
                 ],
                 data: init_data,
             },
-            &[],
+            &[&ctx_signer],
         )
         .expect("init matcher context");
         (ctx, delegate, cu)

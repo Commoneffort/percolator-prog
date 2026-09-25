@@ -18651,12 +18651,7 @@ pub fn run_bounded_active_close_reference_frontier(
                 graph.close_rank_reducing_edges[*action_index] += 1;
             }
             if action.expects_close_frame() {
-                // Issue #204: principal a closing account deposits pays down its own deficit, so a
-                // Deposit may lower the episode's gross loss and residual by the same amount.
-                // Everything else about the episode must stay framed.
-                let principal_cure = matches!(action, BoundedActiveCloseAction::Public(Action::Deposit { .. }))
-                    && close_ledger_is_principal_cure(&close_before, &close_after);
-                if close_after != close_before && !principal_cure {
+                if close_after != close_before {
                     return Err(format!(
                         "INV-075 {winner_side:?}/{landing:?} action {action_index} rewrote an unrelated close episode: {close_before:?} -> {close_after:?}"
                     ));
@@ -34185,9 +34180,13 @@ fn run_forfeit_funding_order_world(
             after_reduce.assets[0].mode_short
         ));
     }
-    // Issue #205: the asset is wound down before a DrainOnly leg with live OI may forfeit.
-    env.drain_only_asset(0, 0)
-        .map_err(|error| format!("PR 273 wind down asset: {error}"))?;
+    // Issue #205: a DrainOnly-side leg with live effective OI may only forfeit once its asset
+    // is in Recovery; forfeiting it on a live book would strand the opposite side.
+    env.configure_permissionless_resolve(1_000, 1)
+        .map_err(|error| format!("PR 273 configure Recovery policy: {error}"))?;
+    let slot = env.current_slot();
+    env.shutdown_asset(0, slot)
+        .map_err(|error| format!("PR 273 shut down asset into Recovery: {error}"))?;
     env.forfeit_recovery_leg(0, 0, u128::from(u64::MAX))
         .map_err(|error| format!("PR 273 forfeit attacker recovery leg: {error}"))?;
     env.crank_if_actionable(3, 3, zero_move_observation(&env))
@@ -34200,11 +34199,13 @@ fn run_forfeit_funding_order_world(
     let victim_claim = (victim.capital.get() as i128)
         .checked_add(victim.pnl.get())
         .ok_or("PR 273 victim claim overflow")?;
-    let attacker_capital = attacker.capital.get();
-    env.withdraw_primary(0, attacker_capital)
-        .map_err(|error| format!("PR 273 withdraw attacker: {error}"))?;
+    // The asset is in Recovery (issue #205), so other legs on it keep withdrawals gated until
+    // the wind-down completes. Both the control and attack worlds report the attacker's
+    // settled capital, which is what the funding comparison needs.
+    let attacker_capital = u64::try_from(attacker.capital.get())
+        .map_err(|_| "PR 273 attacker capital exceeds u64")?;
     Ok((
-        env.token_amount(env.actors[0].destination_token),
+        attacker_capital,
         victim_claim,
         attacker_paid,
         victim_received,
@@ -35938,37 +35939,4 @@ fn observed_positions(
             .ok_or("observed position overflow")?;
     }
     Ok(out)
-}
-
-/// Issue #204: a closing account's own principal pays down its deficit. The only permitted
-/// change is an equal reduction of gross loss and residual within the same episode; if the
-/// residual reaches zero the episode ends finalized (progress was booked) or canceled (none was).
-fn close_ledger_is_principal_cure(
-    before: &percolator::CloseProgressLedgerV16,
-    after: &percolator::CloseProgressLedgerV16,
-) -> bool {
-    let cure = before.residual_remaining.saturating_sub(after.residual_remaining);
-    let same_episode = after.close_id == before.close_id
-        && after.asset_index == before.asset_index
-        && after.market_id == before.market_id
-        && after.domain_side == before.domain_side
-        && after.drift_reference_slot == before.drift_reference_slot
-        && after.max_close_slot == before.max_close_slot
-        && after.support_consumed == before.support_consumed
-        && after.junior_face_burned == before.junior_face_burned
-        && after.insurance_spent == before.insurance_spent
-        && after.b_loss_booked == before.b_loss_booked
-        && after.explicit_loss_assigned == before.explicit_loss_assigned
-        && after.quantity_adl_applied_q == before.quantity_adl_applied_q
-        && after.drift_consumed == before.drift_consumed;
-    let equal_reduction = cure != 0
-        && after.residual_remaining < before.residual_remaining
-        && before.gross_loss_at_close_start.checked_sub(cure) == Some(after.gross_loss_at_close_start);
-    let lifecycle = if after.residual_remaining == 0 {
-        (after.finalized && after.active && !after.canceled)
-            || (after.canceled && !after.active && !after.finalized)
-    } else {
-        after.active == before.active && after.finalized == before.finalized && after.canceled == before.canceled
-    };
-    same_episode && equal_reduction && lifecycle
 }

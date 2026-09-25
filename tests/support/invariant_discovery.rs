@@ -12219,10 +12219,16 @@ fn run_forfeit_accrual_ordering_world(
     if env.primary_market_state().1.assets[0].mode_short != SideModeV16::DrainOnly {
         return Err("public reduction did not enter short-side DrainOnly".into());
     }
-    // A DrainOnly side on a still-Active asset keeps live effective OI; forfeiting it would
-    // strand the opposite side (issue #205). The admin winds the asset down first.
-    env.drain_only_asset(0, 0)
-        .map_err(|error| format!("wind down forfeit accrual asset: {error}"))?;
+    // Issue #205: a DrainOnly-side leg with live effective OI may only forfeit once its asset
+    // is in Recovery; forfeiting it on a live book would strand the opposite side.
+    env.configure_permissionless_resolve(1_000, 1)
+        .map_err(|error| format!("forfeit accrual configure Recovery policy: {error}"))?;
+    // Both orderings enter Recovery at the same authenticated slot, so the frozen funding
+    // trajectory is identical and only the settlement order differs.
+    let slot = settlement_slot.max(env.current_slot());
+    env.warp_to_slot(slot);
+    env.shutdown_asset(0, slot)
+        .map_err(|error| format!("forfeit accrual shut down asset into Recovery: {error}"))?;
     env.forfeit_recovery_leg(0, 0, u128::from(u64::MAX))
         .map_err(|error| format!("forfeit accrual-boundary recovery leg: {error}"))?;
     settle_zero_move_actors(&mut env, settlement_slot, &[3])?;

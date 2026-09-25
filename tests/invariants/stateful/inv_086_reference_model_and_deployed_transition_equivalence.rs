@@ -1597,7 +1597,7 @@ fn inv086_source_section<'a>(source: &'a str, start: &str, end: &str) -> &'a str
 
 #[test]
 fn v16_program_reference_model_dimension_composition_is_source_complete() {
-    const ENGINE_PIN: &str = "8cee6b1f772a8f48fec1ce58a37c02db4034663f";
+    const ENGINE_PIN: &str = "6de466b99512b2a05c9a73ebff42011409473841";
     const DIMENSIONS: &[Inv086ModelDimension] = &[
         Inv086ModelDimension {
             dimension: "public transition census and per-step independent oracle",

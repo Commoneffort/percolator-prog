@@ -106,11 +106,20 @@ struct CaughtUpOutcome {
 
 fn run_caught_up(
     q: [u128; 2],
-    selected: usize,
+    first: usize,
     batch: bool,
     partitioned: bool,
     reverse: bool,
 ) -> (CaughtUpOutcome, u64, bool) {
+    // `first` is the leg opened into slot 0. Liquidation selects the leg with the higher
+    // caught-up notional; exactly equal risk keeps the persisted leg order (issue #176, INV-061).
+    let selected = if u128::from(FINAL_PRICES[first ^ 1]) * q[first ^ 1]
+        > u128::from(FINAL_PRICES[first]) * q[first]
+    {
+        first ^ 1
+    } else {
+        first
+    };
     let initial_capital = q
         .map(|quantity| (quantity * INITIAL_BPS).div_ceil(10_000))
         .iter()
@@ -206,7 +215,7 @@ fn run_caught_up(
         &[&env.admin],
     )
     .expect("fix the public mint supply");
-    let order = [selected, selected ^ 1];
+    let order = [first, first ^ 1];
     if batch {
         let ix = env.batch_trade_no_cpi_ix(
             portfolios[0],
@@ -249,7 +258,7 @@ fn run_caught_up(
         }
     }
     let opened = env.portfolio_state(portfolios[0]);
-    assert_eq!(leg(&opened, 0).asset_index, (selected + 1) as u32);
+    assert_eq!(leg(&opened, 0).asset_index, (first + 1) as u32);
     let idle_before = env.svm.get_account(&portfolios[3]).unwrap();
     let position_frames = [portfolios[0], portfolios[1]].map(|key| env.svm.get_account(&key));
     let initial_group = env.market_state().1;
@@ -538,17 +547,18 @@ fn v16_program_caught_up_multi_asset_sizing_preserves_health_and_beneficiary_val
     let mut worlds = 0;
     let mut fee_price_witnesses = 0;
     for q in [[64, 80], [96, 64], [128, 96]] {
-        for selected in [0, 1] {
+        let mut by_first_slot = Vec::new();
+        for first in [0, 1] {
             let mut reference = None;
             for batch in [false, true] {
                 for partitioned in [false, true] {
                     for reverse in [false, true] {
                         let (outcome, cu, price_witness) =
-                            run_caught_up(q, selected, batch, partitioned, reverse);
+                            run_caught_up(q, first, batch, partitioned, reverse);
                         peak = peak.max(cu);
                         fee_price_witnesses += usize::from(price_witness);
                         if let Some(expected) = &reference {
-                            assert_eq!(expected, &outcome, "q={q:?}, selected={selected}, batch={batch}, partitioned={partitioned}, reverse={reverse}");
+                            assert_eq!(expected, &outcome, "q={q:?}, first={first}, batch={batch}, partitioned={partitioned}, reverse={reverse}");
                         } else {
                             reference = Some(outcome);
                         }
@@ -556,7 +566,11 @@ fn v16_program_caught_up_multi_asset_sizing_preserves_health_and_beneficiary_val
                     }
                 }
             }
+            by_first_slot.push(reference.expect("reference world"));
         }
+        // Issue #176: the persisted slot order a batch taker chooses cannot change which leg is
+        // liquidated, its size, or the keeper's reward.
+        assert_eq!(by_first_slot[0], by_first_slot[1], "q={q:?}: slot order changed the liquidation");
     }
     assert!(fee_price_witnesses > 0);
     println!("INV-061 current-source catchup: {worlds} worlds, {fee_price_witnesses} fee-price witnesses, peak {peak} CU");

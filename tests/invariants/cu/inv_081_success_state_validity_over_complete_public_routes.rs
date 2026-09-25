@@ -92,7 +92,7 @@ fn inv081_source_defines_kani_proof(source: &str, function: &str) -> bool {
 
 #[test]
 fn v16_program_success_state_validity_composition_is_source_complete() {
-    const ENGINE_PIN: &str = "d9d82ae8f83441632f4ebb3fc1c92b2ddfb40bd2";
+    const ENGINE_PIN: &str = "8cee6b1f772a8f48fec1ce58a37c02db4034663f";
     const OWNERS: &[Inv081CompositionOwner] = &[
         Inv081CompositionOwner {
             layer: "production instruction and public witness roster",

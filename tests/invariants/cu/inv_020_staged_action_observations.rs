@@ -404,12 +404,16 @@ fn v16_program_staged_observations_match_current_liquidation_and_reduction() {
             let after = env.market_state().1;
             assert_eq!(env.portfolio_position_epoch(short), position_epoch + 1);
             if liquidation {
-                let remaining = active_leg_for_asset(&env.portfolio_state(short), 0)
+                // Issue #176: liquidation selects the leg with the larger notional, asset 1
+                // (CURRENT[1] > CURRENT[0] at equal size); asset 0 stays untouched.
+                let remaining = active_leg_for_asset(&env.portfolio_state(short), 1)
                     .basis_pos_q
                     .unsigned_abs();
                 assert!(remaining > 0 && remaining < POS_SCALE);
-                assert_eq!(after.assets[0].oi_eff_short_q, remaining);
-                assert_eq!(after.assets[0].oi_eff_long_q, remaining);
+                assert_eq!(after.assets[1].oi_eff_short_q, remaining);
+                assert_eq!(after.assets[1].oi_eff_long_q, remaining);
+                assert_eq!(after.assets[0].oi_eff_long_q, POS_SCALE);
+                assert_eq!(after.assets[0].oi_eff_short_q, POS_SCALE);
                 let capital = env.portfolio_state(short).capital.get();
                 let penalty = 130_000 - capital;
                 let reward = env.portfolio_state(keeper).capital.get() - DEPOSITS[2];
@@ -420,8 +424,8 @@ fn v16_program_staged_observations_match_current_liquidation_and_reduction() {
                     after.c_tot + after.insurance,
                     before.c_tot + before.insurance
                 );
-                let margin = (remaining * u128::from(CURRENT[0])).div_ceil(POS_SCALE * 10)
-                    + u128::from(CURRENT[1]) / 10;
+                let margin = (remaining * u128::from(CURRENT[1])).div_ceil(POS_SCALE * 10)
+                    + u128::from(CURRENT[0]) / 10;
                 assert_current_short(&env, short, capital, margin);
                 assert_eq!(
                     health_cert(&env.portfolio_state(short)).certified_liq_deficit,
@@ -444,9 +448,9 @@ fn v16_program_staged_observations_match_current_liquidation_and_reduction() {
                 );
                 assert_eq!(env.portfolio_state(keeper).capital.get(), DEPOSITS[2]);
                 assert_eq!(after.insurance, 0);
+                assert_eq!(after.assets[1].oi_eff_long_q, POS_SCALE);
+                assert_eq!(after.assets[1].oi_eff_short_q, POS_SCALE);
             }
-            assert_eq!(after.assets[1].oi_eff_long_q, POS_SCALE);
-            assert_eq!(after.assets[1].oi_eff_short_q, POS_SCALE);
             assert_eq!(after.vault, DEPOSITS.iter().sum::<u128>());
             assert_eq!(after.vault, u128::from(env.token_amount(env.vault)));
             assert_eq!(

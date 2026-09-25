@@ -1107,7 +1107,9 @@ fn v16_program_reset_carry_liquidation_matrix_preserves_progress() {
     assert_eq!(source.positive_claim_bound_num, 0);
     assert_eq!(source.exact_positive_claim_num, 0);
     assert!(source.provider_receivable_num > 0);
-    assert_eq!(source.provider_receivable_num, source.spent_backing_num);
+    // A loss-curing gain can spend provider backing that a later capital-backed loss refills
+    // (issue #172 site 2), so what the provider is still owed is at most what was spent.
+    assert!(source.provider_receivable_num <= source.spent_backing_num);
     assert_eq!(source.provider_receivable_num % BOUND_SCALE, 0);
     let refill_atoms = source.provider_receivable_num / BOUND_SCALE;
     let refill_expiry =

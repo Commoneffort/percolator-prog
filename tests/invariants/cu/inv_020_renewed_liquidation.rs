@@ -498,8 +498,10 @@ fn v16_program_renewed_observations_preserve_repeated_liquidation_certificates()
         }
     }
     assert_eq!(worlds, 8);
+    // Risk-ordered selection (issue #176) takes the larger leg first, so each of the eight
+    // worlds restores health in two bounded liquidation steps.
     assert!(
-        liquidations > 16,
+        liquidations >= 16,
         "later episodes must exercise multiple liquidation steps"
     );
     assert_eq!(rollbacks, 32 + liquidations / 2);

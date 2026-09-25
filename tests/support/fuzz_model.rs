@@ -4767,6 +4767,40 @@ impl ScenarioRunner {
             && (!close.active || (close.finalized && close.residual_remaining == 0)))
     }
 
+    /// A haircut receipt legitimately waits for Fresh backing that can still expire into its
+    /// payout pool. An honest keeper waits for that expiry and supplies the owning asset as a
+    /// discovery hint; the engine re-derives status and expiry from committed state.
+    fn keeper_expires_fresh_backing(&mut self) -> Result<bool, String> {
+        let group = self.env.primary_market_state().1;
+        let Some((domain, expiry)) = group
+            .source_backing_buckets
+            .iter()
+            .enumerate()
+            .filter(|(_, bucket)| bucket.status == BackingBucketStatusV16::Fresh)
+            .map(|(domain, bucket)| (domain, bucket.expiry_slot))
+            .min_by_key(|(_, expiry)| *expiry)
+        else {
+            return Ok(false);
+        };
+        let Some(actor) = (0..PRIMARY_ACTOR_COUNT)
+            .find(|actor| !self.portfolio_is_economically_terminal(*actor).unwrap_or(true))
+        else {
+            return Ok(false);
+        };
+        let slot = expiry.max(self.env.current_slot());
+        self.env.warp_to_slot(slot);
+        let hint = CrankObservationHint {
+            asset_index: u16::try_from(domain / 2).map_err(|_| "backing domain exceeds u16")?,
+            oracle_accounts: 0,
+        };
+        Ok(self
+            .env
+            .crank_resolved_primary_signed(actor, slot, vec![hint])
+            .is_ok()
+            && self.env.primary_market_state().1.source_backing_buckets[domain].status
+                != BackingBucketStatusV16::Fresh)
+    }
+
     fn run_terminal_payout_campaign(&mut self) -> Result<(), String> {
         if self.env.primary_market_state().1.mode != MarketModeV16::Resolved {
             return Err("terminal payout campaign requires Resolved mode".into());
@@ -4794,6 +4828,9 @@ impl ScenarioRunner {
             }
             let after_round = self.snapshot();
             if after_round == before_round {
+                if !all_terminal && self.keeper_expires_fresh_backing()? {
+                    continue;
+                }
                 if !all_terminal {
                     let blocked = (0..PRIMARY_ACTOR_COUNT)
                         .filter(|actor| {
@@ -18614,7 +18651,12 @@ pub fn run_bounded_active_close_reference_frontier(
                 graph.close_rank_reducing_edges[*action_index] += 1;
             }
             if action.expects_close_frame() {
-                if close_after != close_before {
+                // Issue #204: principal a closing account deposits pays down its own deficit, so a
+                // Deposit may lower the episode's gross loss and residual by the same amount.
+                // Everything else about the episode must stay framed.
+                let principal_cure = matches!(action, BoundedActiveCloseAction::Public(Action::Deposit { .. }))
+                    && close_ledger_is_principal_cure(&close_before, &close_after);
+                if close_after != close_before && !principal_cure {
                     return Err(format!(
                         "INV-075 {winner_side:?}/{landing:?} action {action_index} rewrote an unrelated close episode: {close_before:?} -> {close_after:?}"
                     ));
@@ -35896,4 +35938,37 @@ fn observed_positions(
             .ok_or("observed position overflow")?;
     }
     Ok(out)
+}
+
+/// Issue #204: a closing account's own principal pays down its deficit. The only permitted
+/// change is an equal reduction of gross loss and residual within the same episode; if the
+/// residual reaches zero the episode ends finalized (progress was booked) or canceled (none was).
+fn close_ledger_is_principal_cure(
+    before: &percolator::CloseProgressLedgerV16,
+    after: &percolator::CloseProgressLedgerV16,
+) -> bool {
+    let cure = before.residual_remaining.saturating_sub(after.residual_remaining);
+    let same_episode = after.close_id == before.close_id
+        && after.asset_index == before.asset_index
+        && after.market_id == before.market_id
+        && after.domain_side == before.domain_side
+        && after.drift_reference_slot == before.drift_reference_slot
+        && after.max_close_slot == before.max_close_slot
+        && after.support_consumed == before.support_consumed
+        && after.junior_face_burned == before.junior_face_burned
+        && after.insurance_spent == before.insurance_spent
+        && after.b_loss_booked == before.b_loss_booked
+        && after.explicit_loss_assigned == before.explicit_loss_assigned
+        && after.quantity_adl_applied_q == before.quantity_adl_applied_q
+        && after.drift_consumed == before.drift_consumed;
+    let equal_reduction = cure != 0
+        && after.residual_remaining < before.residual_remaining
+        && before.gross_loss_at_close_start.checked_sub(cure) == Some(after.gross_loss_at_close_start);
+    let lifecycle = if after.residual_remaining == 0 {
+        (after.finalized && after.active && !after.canceled)
+            || (after.canceled && !after.active && !after.finalized)
+    } else {
+        after.active == before.active && after.finalized == before.finalized && after.canceled == before.canceled
+    };
+    same_episode && equal_reduction && lifecycle
 }

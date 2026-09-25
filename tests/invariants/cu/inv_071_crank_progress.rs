@@ -2890,9 +2890,11 @@ fn v16_attack_auto_crank_reaches_later_material_liquidation_past_tiny_first_leg(
         material_after < material_before,
         "tiny first leg must not shadow liquidation of the later losing leg"
     );
+    // Issue #176: liquidation selects by risk, so the material leg is reached directly and the
+    // minimum-quantum first leg is not liquidated ahead of it.
     assert!(
-        !has_active_leg_for_asset(&env.portfolio_state(victim), 0),
-        "the minimum-quantum first leg must clear before the later material liquidation progresses"
+        has_active_leg_for_asset(&env.portfolio_state(victim), 0),
+        "risk-ordered liquidation must not spend a step on the minimum-quantum first leg"
     );
 }
 

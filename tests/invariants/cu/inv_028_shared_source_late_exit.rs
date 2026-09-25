@@ -711,8 +711,8 @@ fn v16_program_paid_claimant_preserves_peer_latent_capacity_and_late_exit() {
 #[test]
 fn v16_program_full_source_tables_preserve_partial_receipt_through_peer_exit() {
     assert!(include_str!("../../../Cargo.lock").contains(
-        "git+file:///home/owlx1/percolator/percolator?rev=d9d82ae8f83441632f4ebb3fc1c92b2ddfb40bd2#\
-         d9d82ae8f83441632f4ebb3fc1c92b2ddfb40bd2"
+        "git+file:///home/owlx1/percolator/percolator?rev=8cee6b1f772a8f48fec1ce58a37c02db4034663f#\
+         8cee6b1f772a8f48fec1ce58a37c02db4034663f"
     ));
     let mut h = SharedHistory::new();
     for asset in 0..ASSETS {
@@ -978,8 +978,8 @@ fn v16_program_full_source_tables_preserve_partial_receipt_through_peer_exit() {
 fn v16_program_shared_history_preserves_late_claimant_capacity_and_exact_exit() {
     // Revalidate this control locally without recertifying the shared roster.
     assert!(include_str!("../../../Cargo.lock").contains(
-        "git+file:///home/owlx1/percolator/percolator?rev=d9d82ae8f83441632f4ebb3fc1c92b2ddfb40bd2#\
-         d9d82ae8f83441632f4ebb3fc1c92b2ddfb40bd2"
+        "git+file:///home/owlx1/percolator/percolator?rev=8cee6b1f772a8f48fec1ce58a37c02db4034663f#\
+         8cee6b1f772a8f48fec1ce58a37c02db4034663f"
     ));
     let mut peak_cu = 0;
     let mut peak_packet = 0;

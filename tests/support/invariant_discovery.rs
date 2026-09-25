@@ -1506,11 +1506,13 @@ impl ThreeAssetLockedLossDiscovery {
             && self.pre_liquidation_deficit != 0
             && self.pre_liquidation_lock
             && self.steps.len() == ASSET_COUNT
+            // Issue #176: liquidation follows risk (150 > 140 > 120 at equal size), not the
+            // persisted leg order, so every permutation liquidates 0, then 1, then 2.
             && self
                 .steps
                 .iter()
                 .map(|step| step.expected_asset)
-                .eq(self.leg_order.assets())
+                .eq([0u16, 1, 2])
             && self.steps.iter().all(|step| step.satisfies_invariant())
             && self.target_flat
             && self.market_live_before_resolution
@@ -1752,7 +1754,6 @@ impl MultiAssetAdlLiquidationDiscovery {
             && self.third.authenticated_slot > self.followup.authenticated_slot
             && third_slot_is_bounded
             && self.third.prior_selected_asset == self.followup.selected_asset
-            && self.third.selected_asset == self.followup.selected_asset
             && selected < 2
             && self.pre_certificate_valid
             && self.pre_certified_liq_deficit != 0
@@ -1822,9 +1823,11 @@ impl FollowupLiquidationDiscovery {
             .sum::<u128>();
 
         let preparation_valid = match self.selection {
+            // Issue #176: each liquidation re-selects by risk, so a follow-up continues the prior
+            // asset only while it is still the riskiest leg; the model selection is checked by
+            // the framing below.
             FollowupLiquidationSelection::SameAsset => {
-                selected == prior_selected
-                    && self.preparation_close_q == 0
+                self.preparation_close_q == 0
                     && self.preparation_observed_oi_reduce_q == [[0; 2]; 2]
                     && !self.preparation_old_leg_absent
             }
@@ -18199,6 +18202,38 @@ fn discovery_leg_for_asset(
     Ok(found)
 }
 
+/// Reference liquidation selection (issue #176, INV-061): the active leg with the highest
+/// ADL-effective notional; exactly equal risk keeps the persisted leg order.
+fn discovery_risk_selected_asset(
+    group: &percolator_prog::state::MarketGroupV16,
+    account: &percolator_prog::state::PortfolioAccountV16,
+) -> Result<Option<u16>, String> {
+    let mut choice: Option<(u128, u16)> = None;
+    for encoded in account.legs.iter() {
+        let leg = encoded
+            .try_to_runtime()
+            .map_err(|error| format!("decode liquidation reference leg: {error:?}"))?;
+        if !leg.active {
+            continue;
+        }
+        let asset = group.assets[leg.asset_index as usize];
+        let current_epoch = match leg.side {
+            SideV16::Long => asset.epoch_long,
+            SideV16::Short => asset.epoch_short,
+        };
+        let q = if leg.epoch_snap == current_epoch {
+            discovery_effective_leg_q(asset, leg)?
+        } else {
+            0
+        };
+        let risk = q.saturating_mul(u128::from(asset.effective_price));
+        if choice.map_or(true, |(best, _)| risk > best) {
+            choice = Some((risk, leg.asset_index as u16));
+        }
+    }
+    Ok(choice.map(|(_, asset)| asset))
+}
+
 fn discovery_effective_leg_q(
     asset: percolator::AssetStateV16,
     leg: PortfolioLegV16,
@@ -18402,15 +18437,7 @@ fn execute_followup_multi_asset_liquidation(
             "follow-up liquidation did not start from a current deficit: {cert:?}"
         ));
     }
-    let selected_asset = before_account
-        .legs
-        .iter()
-        .map(|encoded| encoded.try_to_runtime())
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| format!("decode follow-up target leg order: {error:?}"))?
-        .into_iter()
-        .find(|leg| leg.active)
-        .map(|leg| leg.asset_index as u16)
+    let selected_asset = discovery_risk_selected_asset(&before_group, &before_account)?
         .ok_or_else(|| "follow-up liquidation target has no active leg".to_string())?;
     if selected_asset > 1 {
         return Err(format!(
@@ -19399,12 +19426,21 @@ fn verify_one_three_asset_locked_loss_liquidation(
             .into_iter()
             .filter(|leg| leg.active)
             .collect::<Vec<_>>();
-        let Some(selected_leg) = active_legs.first().copied() else {
+        let (_, before_group) = env.primary_market_state();
+        // Issue #176: the reference selection is the riskiest active leg, not the first slot.
+        let Some(risk_asset) = discovery_risk_selected_asset(&before_group, &before_account)?
+        else {
+            break;
+        };
+        let Some(selected_leg) = active_legs
+            .iter()
+            .copied()
+            .find(|leg| leg.asset_index as u16 == risk_asset)
+        else {
             break;
         };
         let expected_asset = selected_leg.asset_index as u16;
         let selected_index = usize::from(expected_asset);
-        let (_, before_group) = env.primary_market_state();
         let before_cert = before_account
             .health_cert
             .try_to_runtime()

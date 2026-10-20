@@ -3300,6 +3300,26 @@ pub mod ix {
             observation_sequence: u64,
             authority_epoch: u64,
         },
+        /// Tag 71. The oracle authority of an `AuthMark` asset sets its funding rate (signed, e9
+        /// per slot; positive = longs pay shorts). On an `AuthMark` asset the mark is the index by
+        /// construction, so the premium is zero and the authority supplies the rate instead.
+        /// Accepted only while the asset is accrued to the current slot, so the rate applies from
+        /// now on and never to slots already elapsed; bounded by `max_abs_funding_e9_per_slot`.
+        PushAuthFunding {
+            asset_index: u16,
+            market_id: u64,
+            now_slot: u64,
+            rate_e9: i64,
+            observation_sequence: u64,
+            authority_epoch: u64,
+        },
+        /// Tag 72. The market authority sets `max_abs_funding_e9_per_slot` (the bound on every
+        /// funding rate), re-validated against the market's solvency envelope as at init.
+        UpdateFundingCap {
+            max_abs_funding_e9_per_slot: u64,
+            policy_sequence: u64,
+            authority_epoch: u64,
+        },
         ForceCloseAbandonedAsset {
             asset_index: u16,
             now_slot: u64,
@@ -3800,6 +3820,19 @@ pub mod ix {
                     now_slot: read_u64(&mut rest)?,
                     mark_e6: read_u64(&mut rest)?,
                     observation_sequence: read_u64(&mut rest)?,
+                    authority_epoch: read_u64(&mut rest)?,
+                },
+                71 => Self::PushAuthFunding {
+                    asset_index: read_u16(&mut rest)?,
+                    market_id: read_u64(&mut rest)?,
+                    now_slot: read_u64(&mut rest)?,
+                    rate_e9: read_u64(&mut rest)? as i64,
+                    observation_sequence: read_u64(&mut rest)?,
+                    authority_epoch: read_u64(&mut rest)?,
+                },
+                72 => Self::UpdateFundingCap {
+                    max_abs_funding_e9_per_slot: read_u64(&mut rest)?,
+                    policy_sequence: read_u64(&mut rest)?,
                     authority_epoch: read_u64(&mut rest)?,
                 },
                 64 => Self::ForceCloseAbandonedAsset {
@@ -4448,6 +4481,32 @@ pub mod ix {
                     push_u64(&mut out, now_slot);
                     push_u64(&mut out, mark_e6);
                     push_u64(&mut out, observation_sequence);
+                    push_u64(&mut out, authority_epoch);
+                }
+                Self::PushAuthFunding {
+                    asset_index,
+                    market_id,
+                    now_slot,
+                    rate_e9,
+                    observation_sequence,
+                    authority_epoch,
+                } => {
+                    out.push(71);
+                    push_u16(&mut out, asset_index);
+                    push_u64(&mut out, market_id);
+                    push_u64(&mut out, now_slot);
+                    push_u64(&mut out, rate_e9 as u64);
+                    push_u64(&mut out, observation_sequence);
+                    push_u64(&mut out, authority_epoch);
+                }
+                Self::UpdateFundingCap {
+                    max_abs_funding_e9_per_slot,
+                    policy_sequence,
+                    authority_epoch,
+                } => {
+                    out.push(72);
+                    push_u64(&mut out, max_abs_funding_e9_per_slot);
+                    push_u64(&mut out, policy_sequence);
                     push_u64(&mut out, authority_epoch);
                 }
                 Self::ForceCloseAbandonedAsset {
@@ -6309,6 +6368,34 @@ pub mod processor {
         Ok(sequences)
     }
 
+    /// The funding rate an `AuthMark` asset's oracle authority set (`PushAuthFunding`), e9 per
+    /// slot, positive = longs pay. Asset slots other than 0 do not use the market-wide policy
+    /// lanes of their control sequences (asset 0 owns those), so an asset's rate lives in its
+    /// `trade_fee` lane (the i64's bits), the generation it was set for in its `liquidation_fee`
+    /// lane (a rate set for an asset that was later retired never applies to the asset that
+    /// reuses its slot), and the slot it was set at in its `maintenance_fee` lane. Zero when never set, for asset 0, or for another
+    /// generation.
+    fn authority_funding_rate_view(
+        group: &state::MarketViewMutV16<'_>,
+        asset_index: usize,
+    ) -> Result<i64, ProgramError> {
+        if asset_index == 0 || asset_index >= group.markets.len() {
+            return Ok(0);
+        }
+        let sequences = read_control_sequences_from_view(group, asset_index)?;
+        let generation = group.markets[asset_index].engine.asset.market_id.get();
+        if sequences.liquidation_fee != generation || generation == 0 {
+            return Ok(0);
+        }
+        Ok(sequences.trade_fee as i64)
+    }
+
+    /// The rate applied on an `AuthMark` asset: the authority's, bounded by the market's cap.
+    fn bounded_authority_funding_rate(rate_e9: i64, max_abs_rate: u64) -> i128 {
+        let cap = max_abs_rate as i128;
+        (rate_e9 as i128).clamp(-cap, cap)
+    }
+
     fn write_control_sequences_to_view(
         group: &mut state::MarketViewMutV16<'_>,
         asset_index: usize,
@@ -7614,6 +7701,34 @@ pub mod processor {
                 now_slot,
                 mark_e6,
                 observation_sequence,
+                authority_epoch,
+            ),
+            Instruction::PushAuthFunding {
+                asset_index,
+                market_id,
+                now_slot,
+                rate_e9,
+                observation_sequence,
+                authority_epoch,
+            } => handle_push_auth_funding(
+                program_id,
+                accounts,
+                asset_index,
+                market_id,
+                now_slot,
+                rate_e9,
+                observation_sequence,
+                authority_epoch,
+            ),
+            Instruction::UpdateFundingCap {
+                max_abs_funding_e9_per_slot,
+                policy_sequence,
+                authority_epoch,
+            } => handle_update_funding_cap(
+                program_id,
+                accounts,
+                max_abs_funding_e9_per_slot,
+                policy_sequence,
                 authority_epoch,
             ),
             Instruction::ForceCloseAbandonedAsset {
@@ -13764,6 +13879,100 @@ pub mod processor {
         state::write_wrapper_config(&mut market_ai.try_borrow_mut_data()?, &cfg_after)
     }
 
+    /// `PushAuthFunding`: the oracle authority of an `AuthMark` asset sets its funding rate.
+    /// Accounts: 0 the asset's oracle authority [signer], 1 market [w].
+    #[inline(never)]
+    fn handle_push_auth_funding<'a>(
+        program_id: &Pubkey,
+        accounts: &'a [AccountInfo<'a>],
+        asset_index: u16,
+        expected_market_id: u64,
+        now_slot: u64,
+        rate_e9: i64,
+        observation_sequence: u64,
+        expected_authority_epoch: u64,
+    ) -> ProgramResult {
+        let authority = account(accounts, 0)?;
+        let market_ai = account(accounts, 1)?;
+        expect_signer(authority)?;
+        expect_writable(market_ai)?;
+        expect_owner(market_ai, program_id)?;
+        let asset_index_usize = asset_index as usize;
+        let authenticated_slot = authenticated_slot_or_fallback(now_slot);
+        let mut data = market_ai.try_borrow_mut_data()?;
+        let (cfg, mut group) = state::market_view_mut(&mut data)?;
+        // Asset 0 is the collateral unit, and its control sequences hold the market's policy lanes.
+        if asset_index_usize == 0 || asset_index_usize >= group.header.config.max_market_slots.get() as usize {
+            return Err(PercolatorError::InvalidInstruction.into());
+        }
+        require_asset_generation_view(&group, asset_index_usize, expected_market_id)?;
+        if group.header.mode != 0 {
+            return Err(PercolatorError::EngineLockActive.into());
+        }
+        let profile = read_oracle_profile_from_view(&group, &cfg, asset_index_usize)?;
+        if !oracle_v16::profile_is_auth_mark(&profile) {
+            return Err(PercolatorError::Unauthorized.into());
+        }
+        let authorities = domain_authorities_from_profile(&cfg, &profile, asset_index_usize);
+        expect_live_authority(&authorities.oracle_authority, authority.key)?;
+        require_authority_epoch_view(&group, asset_index_usize, expected_authority_epoch)?;
+        // From now on only: the asset must already be accrued to this slot, so no elapsed slot is
+        // charged at the new rate.
+        let asset = group.markets[asset_index_usize].engine.asset;
+        if asset.slot_last.get() != authenticated_slot {
+            return Err(PercolatorError::EngineStale.into());
+        }
+        if rate_e9.unsigned_abs() > group.header.config.max_abs_funding_e9_per_slot.get() {
+            return Err(PercolatorError::InvalidInstruction.into());
+        }
+        advance_control_sequence_view(
+            &mut group,
+            asset_index_usize,
+            ControlSequenceLane::OracleObservation,
+            observation_sequence,
+        )?;
+        let mut sequences = read_control_sequences_from_view(&group, asset_index_usize)?;
+        sequences.trade_fee = rate_e9 as u64;
+        sequences.liquidation_fee = asset.market_id.get();
+        // When it was set (the authority smooths its rate over time from here).
+        sequences.maintenance_fee = authenticated_slot;
+        write_control_sequences_to_view(&mut group, asset_index_usize, &sequences)?;
+        group.validate_shape().map_err(map_v16_error)
+    }
+
+    /// `UpdateFundingCap`: the market authority sets the bound on every funding rate. The new
+    /// configuration is validated as `InitMarket` validates it (the solvency envelope bounds the
+    /// funding headroom over `min_funding_lifetime_slots`). The sequence shares asset 0's
+    /// trade-fee lane with `UpdateTradeFeePolicy`: both are market-authority policy updates.
+    /// Accounts: 0 market authority [signer], 1 market [w].
+    #[inline(never)]
+    fn handle_update_funding_cap<'a>(
+        program_id: &Pubkey,
+        accounts: &'a [AccountInfo<'a>],
+        max_abs_funding_e9_per_slot: u64,
+        policy_sequence: u64,
+        expected_authority_epoch: u64,
+    ) -> ProgramResult {
+        let admin = account(accounts, 0)?;
+        let market_ai = account(accounts, 1)?;
+        expect_signer(admin)?;
+        expect_writable(market_ai)?;
+        expect_owner(market_ai, program_id)?;
+        let mut data = market_ai.try_borrow_mut_data()?;
+        let (cfg, mut group) = state::market_view_mut(&mut data)?;
+        expect_live_authority(&cfg.marketauth, admin.key)?;
+        if group.header.mode != 0 {
+            return Err(PercolatorError::EngineLockActive.into());
+        }
+        require_authority_epoch_view(&group, 0, expected_authority_epoch)?;
+        let mut runtime = group.header.config.try_to_runtime_shape().map_err(map_v16_error)?;
+        runtime.max_abs_funding_e9_per_slot = max_abs_funding_e9_per_slot;
+        runtime.validate_public_user_fund().map_err(map_v16_error)?;
+        advance_control_sequence_view(&mut group, 0, ControlSequenceLane::TradeFee, policy_sequence)?;
+        group.header.config = percolator::V16ConfigAccount::from_runtime(&runtime);
+        group.validate_shape().map_err(map_v16_error)
+    }
+
     #[inline(never)]
     fn handle_close_resolved<'a>(
         program_id: &Pubkey,
@@ -15667,9 +15876,16 @@ pub mod processor {
         effective_price_before: u64,
         effective_price_after: u64,
         segment_dt: u64,
+        authority_rate_e9: i64,
     ) -> Result<i128, ProgramError> {
         if !oracle_v16::profile_is_price_managed(profile) || max_abs_rate == 0 {
             return Ok(0);
+        }
+        // An AuthMark asset's mark is its index by construction (the authority pushes both), so
+        // its premium is only the effective price's walk toward a new mark: not a funding signal.
+        // Its funding is the rate its authority sets (`PushAuthFunding`), zero until set.
+        if oracle_v16::profile_is_auth_mark(profile) {
+            return Ok(bounded_authority_funding_rate(authority_rate_e9, max_abs_rate));
         }
         let active_mark = if profile.funding_mark_e6 != 0 {
             profile.funding_mark_e6
@@ -15746,6 +15962,7 @@ pub mod processor {
         let exposed = asset.oi_eff_long_q.get() != 0 || asset.oi_eff_short_q.get() != 0;
         let max_price_move_bps_per_slot = group.header.config.max_price_move_bps_per_slot.get();
         let max_abs_rate = group.header.config.max_abs_funding_e9_per_slot.get();
+        let authority_rate_e9 = authority_funding_rate_view(group, asset_index)?;
         let mut effective_price = asset.effective_price.get();
         let price_cap_anchor = if old_target == target {
             let anchor = asset.fund_px_last.get();
@@ -15812,6 +16029,7 @@ pub mod processor {
                 effective_price,
                 next_price,
                 1,
+                authority_rate_e9,
             )?;
             steps.push(AccrualStepV16 {
                 effective_price: next_price,
@@ -15873,6 +16091,7 @@ pub mod processor {
             asset.effective_price.get(),
             effective_price,
             segment_dt,
+            authority_funding_rate_view(group, asset_index)?,
         )
     }
 

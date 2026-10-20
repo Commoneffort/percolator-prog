@@ -86,7 +86,8 @@ unexpected_cfgs = { level = "warn", check-cfg = [
     'cfg(feature, values("custom-heap", "custom-panic", "idl-build"))',
 ] }
 
-# The engine with upstream PR #226 merged and corrected (branch merge/pr-226) until it is pushed to the
-# fork and the rev above is moved to it.
+# The engine as deployed on 2026-10-17 (42709fb) plus exact funding indices (branch funding/precision
+# of the engine, checked out at ../_wt_eng), until it is pushed to the fork and the rev above is moved
+# to it.
 [patch."https://github.com/Commoneffort/percolator"]
-percolator = { path = "../percolator" }
+percolator = { path = "../_wt_eng" }

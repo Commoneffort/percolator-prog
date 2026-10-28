@@ -55,12 +55,12 @@ pinocchio = "0.6"
 arrayref = "0.3"
 num-derive = "0.4"
 num-traits = "0.2"
-percolator = { git = "https://github.com/Commoneffort/percolator", rev = "6de466b99512b2a05c9a73ebff42011409473841" }
+percolator = { git = "https://github.com/Commoneffort/percolator", rev = "460944c560aeb3685ecd26ef9db19ca53b187e29" }
 anchor-lang-v2 = { git = "https://github.com/solana-foundation/anchor", rev = "e3cf760826fa0a60f247635ea0572e59861ec9b5", package = "anchor-lang-v2", default-features = false, features = ["alloc", "guardrails", "account-resize"], optional = true }
 
 [target.'cfg(not(target_os = "solana"))'.dependencies]
 # Host tests use the same zero-copy account/view API as the SBF/program target.
-percolator = { git = "https://github.com/Commoneffort/percolator", rev = "6de466b99512b2a05c9a73ebff42011409473841" }
+percolator = { git = "https://github.com/Commoneffort/percolator", rev = "460944c560aeb3685ecd26ef9db19ca53b187e29" }
 
 [dev-dependencies]
 bincode = "1"
@@ -85,9 +85,3 @@ unexpected_cfgs = { level = "warn", check-cfg = [
     'cfg(target_os, values("solana"))',
     'cfg(feature, values("custom-heap", "custom-panic", "idl-build"))',
 ] }
-
-# The engine as deployed on 2026-10-17 (42709fb) plus exact funding indices (branch funding/precision
-# of the engine, checked out at ../_wt_eng), until it is pushed to the fork and the rev above is moved
-# to it.
-[patch."https://github.com/Commoneffort/percolator"]
-percolator = { path = "../_wt_eng" }

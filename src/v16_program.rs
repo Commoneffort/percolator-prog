@@ -4732,6 +4732,12 @@ pub mod matcher_abi {
     pub const FLAG_REJECTED: u32 = 4;
     pub const FLAG_BACKING_FEE_CAP_SHIFT: u32 = 8;
     pub const FLAG_BACKING_FEE_CAP_MASK: u32 = 0x3fff << FLAG_BACKING_FEE_CAP_SHIFT;
+    /// Fork addition (Turbopump, 2026-11-05; not upstream): the LP's matcher asks for the trade
+    /// to go through even while other accounts' K/F cohorts on the asset are stale (the engine's
+    /// `execute_trade_with_fee_cohort_tolerant_not_atomic`). The two trading accounts are still
+    /// settled inline and the asset must be accrued to the current slot. Only the LP's own
+    /// matcher can ask for it, so only markets whose matcher does are affected.
+    pub const FLAG_COHORT_TOLERANT: u32 = 1 << 22;
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub struct MatcherReturn {
@@ -4778,8 +4784,11 @@ pub mod matcher_abi {
         if ret.abi_version != MATCHER_ABI_VERSION {
             return Err(ProgramError::InvalidAccountData);
         }
-        const KNOWN_FLAGS: u32 =
-            FLAG_VALID | FLAG_PARTIAL_OK | FLAG_REJECTED | FLAG_BACKING_FEE_CAP_MASK;
+        const KNOWN_FLAGS: u32 = FLAG_VALID
+            | FLAG_PARTIAL_OK
+            | FLAG_REJECTED
+            | FLAG_BACKING_FEE_CAP_MASK
+            | FLAG_COHORT_TOLERANT;
         if (ret.flags & !KNOWN_FLAGS) != 0
             || (ret.flags & FLAG_VALID) == 0
             || (ret.flags & FLAG_REJECTED) != 0
@@ -8240,6 +8249,7 @@ pub mod processor {
         account_b_backing_fee_cap_bps: Option<u16>,
         account_b_matcher_synchronized: bool,
         max_market_slots: usize,
+        cohort_tolerant: bool,
     ) -> ProgramResult {
         ensure_portfolio_storage_for_market_slots(account_a_ai, max_market_slots)?;
         ensure_portfolio_storage_for_market_slots(account_b_ai, max_market_slots)?;
@@ -8381,23 +8391,13 @@ pub mod processor {
                 source_lien_effective_reserved_snapshot_for_trade_view(&account_a)?;
             let source_lien_before_b =
                 source_lien_effective_reserved_snapshot_for_trade_view(&account_b)?;
-            let outcome = if size_q > 0 {
-                group
-                    .execute_trade_with_fee_loss_stale_scoped_not_atomic(
-                        &mut account_a,
-                        &mut account_b,
-                        req,
-                    )
-                    .map_err(map_v16_error)?
-            } else {
-                group
-                    .execute_trade_with_fee_loss_stale_scoped_not_atomic(
-                        &mut account_b,
-                        &mut account_a,
-                        req,
-                    )
-                    .map_err(map_v16_error)?
-            };
+            let outcome = match (size_q > 0, cohort_tolerant) {
+                (true, false) => group.execute_trade_with_fee_loss_stale_scoped_not_atomic(&mut account_a, &mut account_b, req),
+                (false, false) => group.execute_trade_with_fee_loss_stale_scoped_not_atomic(&mut account_b, &mut account_a, req),
+                (true, true) => group.execute_trade_with_fee_cohort_tolerant_not_atomic(&mut account_a, &mut account_b, req),
+                (false, true) => group.execute_trade_with_fee_cohort_tolerant_not_atomic(&mut account_b, &mut account_a, req),
+            }
+            .map_err(map_v16_error)?;
             ensure_trade_side_oi_cap_view(&group, asset_index_usize)?;
             ensure_new_counterparty_backed_liens_fresh_for_trade_view(
                 &group,
@@ -8996,6 +8996,7 @@ pub mod processor {
             Some(backing_fee_cap_bps),
             false,
             max_market_slots,
+            false,
         )
     }
 
@@ -9700,6 +9701,7 @@ pub mod processor {
             Some(ret.backing_fee_cap_bps()),
             true,
             max_market_slots,
+            (ret.flags & matcher_abi::FLAG_COHORT_TOLERANT) != 0,
         )
     }
 

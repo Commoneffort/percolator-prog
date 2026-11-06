@@ -1270,6 +1270,10 @@ fn v16_program_every_wrapper_engine_transition_callsite_has_summary_disposition_
         // Fork (Turbopump, 2026-11-05): the cohort-tolerant trade, the same engine trade path
         // with one gate relaxed (FLAG_COHORT_TOLERANT).
         Inv088EngineCallsite { owner: "handle_trade_nocpi_zero_copy", method: "execute_trade_with_fee_cohort_tolerant_not_atomic", count: 2, summary_family: "position-pnl-certificate", witness: "v16_program_stored_position_summaries_match_portfolio_scan_after_cross_asset_updates" },
+        // Fork (Turbopump, 2026-11-07): the same two trade paths, economically at the matcher's
+        // price (FLAG_AT_PRICE): the difference moves between the two accounts' capital.
+        Inv088EngineCallsite { owner: "handle_trade_nocpi_zero_copy", method: "execute_trade_with_fee_loss_stale_scoped_at_price_not_atomic", count: 2, summary_family: "position-pnl-certificate", witness: "v16_program_stored_position_summaries_match_portfolio_scan_after_cross_asset_updates" },
+        Inv088EngineCallsite { owner: "handle_trade_nocpi_zero_copy", method: "execute_trade_with_fee_cohort_tolerant_at_price_not_atomic", count: 2, summary_family: "position-pnl-certificate", witness: "v16_program_stored_position_summaries_match_portfolio_scan_after_cross_asset_updates" },
         Inv088EngineCallsite { owner: "handle_batch_execute_zero_copy", method: "execute_batch_with_fee_loss_stale_scoped_not_atomic", count: 1, summary_family: "position-pnl-certificate", witness: "v16_program_batch_nocpi_updates_each_asset_summary_from_portfolio_scan" },
         Inv088EngineCallsite { owner: "handle_batch_execute_zero_copy", method: "credit_domain_insurance_budgets_not_atomic", count: 1, summary_family: "insurance-budget", witness: "v16_attack_backing_fee_split_conserves" },
         Inv088EngineCallsite { owner: "handle_batch_execute_zero_copy", method: "set_asset_raw_oracle_targets_not_atomic", count: 1, summary_family: "asset-oracle", witness: "v16_attack_repeated_ewma_moves_require_catchup_and_remain_fee_covered" },
@@ -1432,8 +1436,8 @@ fn v16_program_every_wrapper_engine_transition_callsite_has_summary_disposition_
     }
     assert_eq!(
         certificate_disposition_classes,
-        [18, 17, 13, 5],
-        "all 53 wrapper-to-engine callsite classes need an explicit, nonvacuous certificate disposition",
+        [18, 19, 13, 5],
+        "all 55 wrapper-to-engine callsite classes need an explicit, nonvacuous certificate disposition",
     );
     assert_eq!(
         actual, expected,

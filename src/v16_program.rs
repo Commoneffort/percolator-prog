@@ -4738,6 +4738,11 @@ pub mod matcher_abi {
     /// settled inline and the asset must be accrued to the current slot. Only the LP's own
     /// matcher can ask for it, so only markets whose matcher does are affected.
     pub const FLAG_COHORT_TOLERANT: u32 = 1 << 22;
+    /// Fork (Turbopump maker quotes, 2026-11-06): the trade is economically at the matcher's
+    /// `exec_price_e6` rather than at the effective price: the engine settles the difference in
+    /// principal between the two accounts (`execute_trade_with_fee_cohort_tolerant_at_price_not_atomic`).
+    /// Only the LP's own matcher can set it (the LP is the account that pays or receives).
+    pub const FLAG_AT_PRICE: u32 = 1 << 23;
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub struct MatcherReturn {
@@ -4788,7 +4793,8 @@ pub mod matcher_abi {
             | FLAG_PARTIAL_OK
             | FLAG_REJECTED
             | FLAG_BACKING_FEE_CAP_MASK
-            | FLAG_COHORT_TOLERANT;
+            | FLAG_COHORT_TOLERANT
+            | FLAG_AT_PRICE;
         if (ret.flags & !KNOWN_FLAGS) != 0
             || (ret.flags & FLAG_VALID) == 0
             || (ret.flags & FLAG_REJECTED) != 0
@@ -8250,7 +8256,11 @@ pub mod processor {
         account_b_matcher_synchronized: bool,
         max_market_slots: usize,
         cohort_tolerant: bool,
+        pay_price: Option<u64>,
     ) -> ProgramResult {
+        if let Some(p) = pay_price {
+            ensure_valid_reported_trade_price(p)?;
+        }
         ensure_portfolio_storage_for_market_slots(account_a_ai, max_market_slots)?;
         ensure_portfolio_storage_for_market_slots(account_b_ai, max_market_slots)?;
         let mut cfg_after = None;
@@ -8391,11 +8401,15 @@ pub mod processor {
                 source_lien_effective_reserved_snapshot_for_trade_view(&account_a)?;
             let source_lien_before_b =
                 source_lien_effective_reserved_snapshot_for_trade_view(&account_b)?;
-            let outcome = match (size_q > 0, cohort_tolerant) {
-                (true, false) => group.execute_trade_with_fee_loss_stale_scoped_not_atomic(&mut account_a, &mut account_b, req),
-                (false, false) => group.execute_trade_with_fee_loss_stale_scoped_not_atomic(&mut account_b, &mut account_a, req),
-                (true, true) => group.execute_trade_with_fee_cohort_tolerant_not_atomic(&mut account_a, &mut account_b, req),
-                (false, true) => group.execute_trade_with_fee_cohort_tolerant_not_atomic(&mut account_b, &mut account_a, req),
+            let outcome = match (size_q > 0, cohort_tolerant, pay_price) {
+                (true, false, None) => group.execute_trade_with_fee_loss_stale_scoped_not_atomic(&mut account_a, &mut account_b, req),
+                (false, false, None) => group.execute_trade_with_fee_loss_stale_scoped_not_atomic(&mut account_b, &mut account_a, req),
+                (true, false, Some(p)) => group.execute_trade_with_fee_loss_stale_scoped_at_price_not_atomic(&mut account_a, &mut account_b, req, p),
+                (false, false, Some(p)) => group.execute_trade_with_fee_loss_stale_scoped_at_price_not_atomic(&mut account_b, &mut account_a, req, p),
+                (true, true, None) => group.execute_trade_with_fee_cohort_tolerant_not_atomic(&mut account_a, &mut account_b, req),
+                (false, true, None) => group.execute_trade_with_fee_cohort_tolerant_not_atomic(&mut account_b, &mut account_a, req),
+                (true, true, Some(p)) => group.execute_trade_with_fee_cohort_tolerant_at_price_not_atomic(&mut account_a, &mut account_b, req, p),
+                (false, true, Some(p)) => group.execute_trade_with_fee_cohort_tolerant_at_price_not_atomic(&mut account_b, &mut account_a, req, p),
             }
             .map_err(map_v16_error)?;
             ensure_trade_side_oi_cap_view(&group, asset_index_usize)?;
@@ -8997,6 +9011,7 @@ pub mod processor {
             false,
             max_market_slots,
             false,
+            None,
         )
     }
 
@@ -9702,6 +9717,7 @@ pub mod processor {
             true,
             max_market_slots,
             (ret.flags & matcher_abi::FLAG_COHORT_TOLERANT) != 0,
+            ((ret.flags & matcher_abi::FLAG_AT_PRICE) != 0).then_some(ret.exec_price_e6),
         )
     }
 

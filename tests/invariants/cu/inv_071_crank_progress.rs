@@ -258,10 +258,14 @@ fn v16_program_public_b_prerequisite_preserves_later_liquidation_progress() {
     let b_after = active_leg_for_asset(&after_b, 1);
     assert!(b_after.b_snap > b_before.b_snap);
     assert!(b_after.b_snap <= target_b);
+    // Fork (#172 crank order): the SettleB step settles the account's pending K/F first, as
+    // the combined settlement path does, so the adverse leg's K/F snapshot may advance. Its
+    // position (size, side, weight, B state) must be untouched: B work does not trade it.
+    let adverse_after = active_leg_for_asset(&after_b, 0);
     assert_eq!(
-        active_leg_for_asset(&after_b, 0),
-        adverse_before,
-        "B settlement must frame the independent adverse leg"
+        (adverse_after.active, adverse_after.side, adverse_after.basis_pos_q, adverse_after.a_basis, adverse_after.loss_weight, adverse_after.b_snap, adverse_after.b_rem),
+        (adverse_before.active, adverse_before.side, adverse_before.basis_pos_q, adverse_before.a_basis, adverse_before.loss_weight, adverse_before.b_snap, adverse_before.b_rem),
+        "B settlement must not resize or redirect the independent adverse leg"
     );
     assert_eq!(
         env.svm.get_account(&env.vault).unwrap(),

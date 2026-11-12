@@ -56,12 +56,12 @@ arrayref = "0.3"
 num-derive = "0.4"
 num-traits = "0.2"
 # Engine: branch speed/2026-11 of our fork (docs/SPEED-FORK.md in Turbopump).
-percolator = { git = "https://github.com/Commoneffort/percolator", rev = "b1700f8446304beb83d1c9d34f309974723a73f9" }
+percolator = { git = "https://github.com/Commoneffort/percolator", rev = "6b33ed615fdcda8a06824e42931a16eae802d047" }
 anchor-lang-v2 = { git = "https://github.com/solana-foundation/anchor", rev = "e3cf760826fa0a60f247635ea0572e59861ec9b5", package = "anchor-lang-v2", default-features = false, features = ["alloc", "guardrails", "account-resize"], optional = true }
 
 [target.'cfg(not(target_os = "solana"))'.dependencies]
 # Host tests use the same zero-copy account/view API as the SBF/program target.
-percolator = { git = "https://github.com/Commoneffort/percolator", rev = "b1700f8446304beb83d1c9d34f309974723a73f9" }
+percolator = { git = "https://github.com/Commoneffort/percolator", rev = "6b33ed615fdcda8a06824e42931a16eae802d047" }
 
 [dev-dependencies]
 bincode = "1"

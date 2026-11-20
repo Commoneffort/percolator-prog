@@ -89,5 +89,5 @@ unexpected_cfgs = { level = "warn", check-cfg = [
 
 # Speed work (docs/SPEED-FORK.md in percolator-vault): the engine fork's branch, built from the
 # local worktree until its commit is pinned above.
-[patch."https://github.com/Commoneffort/percolator"]
-percolator = { path = "../_wt_speed" }
+[patch."https://github.com/aeyakovenko/percolator"]
+percolator = { path = "../_wt_port" }

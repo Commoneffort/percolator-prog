@@ -2007,6 +2007,120 @@ pub mod state {
         Ok(req_id)
     }
 
+    // ---- Fork (Turbopump) one-shot layout migration, tag 73 ----
+    //
+    // Engine c030aa4 (upstream #247 provider principal, #449 raw-basis sum) grew every asset
+    // slot by 64 bytes: `AssetStateV16Account` gained `raw_basis_sum_{long,short}_q` right
+    // after `oi_eff_short_q`, and `EngineAssetSlotV16Account` gained
+    // `provider_principal_{long,short}_num` at its end. Nothing else in a market account moved.
+
+    /// Bytes the current layout adds to each asset slot.
+    pub const LAYOUT_V2_ADDED_PER_SLOT: usize = 64;
+    /// Asset-slot length written by the engine before c030aa4.
+    pub const LAYOUT_V1_ASSET_SLOT_LEN: usize = crate::constants::MARKET_ASSET_SLOT_LEN - LAYOUT_V2_ADDED_PER_SLOT;
+
+    /// Slot capacity and wrapper config of a Live market account still in the pre-c030aa4
+    /// layout. Refuses anything else, including an account that is already current.
+    pub fn layout_v1_market(data: &[u8]) -> Result<(usize, WrapperConfigV16), ProgramError> {
+        check_header(data, KIND_MARKET)?;
+        let config = read_wrapper_config_from_bytes(data)?;
+        let base = MARKET_GROUP_OFF + MARKET_GROUP_LEN;
+        if data.len() <= base || (data.len() - base) % LAYOUT_V1_ASSET_SLOT_LEN != 0 {
+            return Err(PercolatorError::InvalidAccountLen.into());
+        }
+        if (data.len() - base) % crate::constants::MARKET_ASSET_SLOT_LEN == 0 {
+            // Also a valid current length: the layout cannot be told from the length alone.
+            return Err(ProgramError::InvalidAccountData);
+        }
+        let capacity = (data.len() - base) / LAYOUT_V1_ASSET_SLOT_LEN;
+        let header = bytemuck::try_from_bytes::<MarketGroupV16HeaderAccount>(
+            data.get(MARKET_GROUP_OFF..base).ok_or(PercolatorError::InvalidAccountLen)?,
+        )
+        .map_err(|_| ProgramError::InvalidAccountData)?;
+        let configured = header.config.max_market_slots.get() as usize;
+        if configured == 0 || configured > capacity || header.mode != 0 {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        Ok((capacity, config))
+    }
+
+    /// The raw-basis sum of one side of a v1 slot. Exact only when the side has not been
+    /// haircut since its last reset (A = ADL_ONE: every leg's raw basis is its effective size,
+    /// and the engine moves the sum in lockstep with `oi_eff`) or holds no position at all.
+    fn layout_v1_side_raw_basis_sum(a: u128, oi_eff: u128, stored_pos_count: u64) -> Result<u128, ProgramError> {
+        if a == percolator::ADL_ONE {
+            Ok(oi_eff)
+        } else if oi_eff == 0 && stored_pos_count == 0 {
+            Ok(0)
+        } else {
+            Err(ProgramError::InvalidAccountData)
+        }
+    }
+
+    /// Rewrites, in place, the `capacity` v1 slots at the front of the slot area into the
+    /// current layout. `data` must already have the current length (the tail past the v1
+    /// slots is overwritten). Provider principal is set to 0, which is exact only when no
+    /// provider ever topped up backing: an asset whose `backing_top_up` watermark is not 0 is
+    /// refused. Nothing is written unless every slot passes.
+    pub fn migrate_layout_v1_slots_in_place(data: &mut [u8], capacity: usize) -> Result<(), ProgramError> {
+        use core::mem::offset_of;
+        use percolator::AssetStateV16Account;
+        let base = MARKET_GROUP_OFF + MARKET_GROUP_LEN;
+        if data.len() != base + capacity * crate::constants::MARKET_ASSET_SLOT_LEN {
+            return Err(PercolatorError::InvalidAccountLen.into());
+        }
+        let engine = offset_of!(Market<AssetOracleStorageV16>, engine);
+        let asset = engine + offset_of!(EngineAssetSlotV16Account, asset);
+        let raw = asset + offset_of!(AssetStateV16Account, raw_basis_sum_long_q);
+        let principal = engine + offset_of!(EngineAssetSlotV16Account, provider_principal_long_num);
+        // The layout facts the rewrite relies on.
+        if engine != ASSET_ORACLE_WRAPPER_LEN
+            || asset + offset_of!(AssetStateV16Account, raw_basis_sum_short_q) != raw + 16
+            || asset + offset_of!(AssetStateV16Account, oi_eff_short_q) + 16 != raw
+            || asset + offset_of!(AssetStateV16Account, stored_pos_count_long) != raw + 32
+            || engine + offset_of!(EngineAssetSlotV16Account, provider_principal_short_num) != principal + 16
+            || principal + 32 != crate::constants::MARKET_ASSET_SLOT_LEN
+        {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        let u128_at = |b: &[u8], o: usize| u128::from_le_bytes(b[o..o + 16].try_into().unwrap());
+        let u64_at = |b: &[u8], o: usize| u64::from_le_bytes(b[o..o + 8].try_into().unwrap());
+        let top_up = ASSET_CONTROL_SEQUENCES_OFF + offset_of!(AssetControlSequencesV16, backing_top_up);
+        // Pass 1: every slot must migrate exactly. Fields before `raw` sit at the same
+        // offset in both layouts; in v1 `stored_pos_count_long` starts at `raw`.
+        let mut sums = alloc::vec::Vec::with_capacity(capacity);
+        for i in 0..capacity {
+            let old = &data[base + i * LAYOUT_V1_ASSET_SLOT_LEN..base + (i + 1) * LAYOUT_V1_ASSET_SLOT_LEN];
+            if u64_at(old, top_up) != 0 {
+                return Err(ProgramError::InvalidAccountData);
+            }
+            let long = layout_v1_side_raw_basis_sum(
+                u128_at(old, asset + offset_of!(AssetStateV16Account, a_long)),
+                u128_at(old, asset + offset_of!(AssetStateV16Account, oi_eff_long_q)),
+                u64_at(old, raw),
+            )?;
+            let short = layout_v1_side_raw_basis_sum(
+                u128_at(old, asset + offset_of!(AssetStateV16Account, a_short)),
+                u128_at(old, asset + offset_of!(AssetStateV16Account, oi_eff_short_q)),
+                u64_at(old, raw + 8),
+            )?;
+            sums.push((long, short));
+        }
+        // Pass 2: last slot first, since each new slot lies at or past its old position.
+        for i in (0..capacity).rev() {
+            let o = base + i * LAYOUT_V1_ASSET_SLOT_LEN;
+            let n = base + i * crate::constants::MARKET_ASSET_SLOT_LEN;
+            let old = data[o..o + LAYOUT_V1_ASSET_SLOT_LEN].to_vec();
+            let new = &mut data[n..n + crate::constants::MARKET_ASSET_SLOT_LEN];
+            new[..raw].copy_from_slice(&old[..raw]);
+            new[raw..raw + 16].copy_from_slice(&sums[i].0.to_le_bytes());
+            new[raw + 16..raw + 32].copy_from_slice(&sums[i].1.to_le_bytes());
+            new[raw + 32..principal].copy_from_slice(&old[raw..principal - 32]);
+            new[principal..].fill(0);
+        }
+        Ok(())
+    }
+
     pub fn market_view_mut(
         data: &mut [u8],
     ) -> Result<(WrapperConfigV16, MarketViewMutV16<'_>), ProgramError> {
@@ -3355,6 +3469,11 @@ pub mod ix {
             policy_sequence: u64,
             authority_epoch: u64,
         },
+        /// Tag 73 (fork, one-shot). The market authority moves a market account from the
+        /// pre-c030aa4 engine layout to the current one (`state::migrate_layout_v1_slots_in_place`).
+        /// Accounts: [market authority (signer), market (writable)]. The market must already
+        /// hold rent for its new length.
+        MigrateMarketLayoutV2,
         ForceCloseAbandonedAsset {
             asset_index: u16,
             now_slot: u64,
@@ -3479,6 +3598,7 @@ pub mod ix {
                     | 70
                     | 71
                     | 72
+                    | 73
             )
         }
 
@@ -3867,6 +3987,7 @@ pub mod ix {
                     observation_sequence: read_u64(&mut rest)?,
                     authority_epoch: read_u64(&mut rest)?,
                 },
+                73 => Self::MigrateMarketLayoutV2,
                 72 => Self::UpdateFundingCap {
                     max_abs_funding_e9_per_slot: read_u64(&mut rest)?,
                     policy_sequence: read_u64(&mut rest)?,
@@ -4536,6 +4657,7 @@ pub mod ix {
                     push_u64(&mut out, observation_sequence);
                     push_u64(&mut out, authority_epoch);
                 }
+                Self::MigrateMarketLayoutV2 => out.push(73),
                 Self::UpdateFundingCap {
                     max_abs_funding_e9_per_slot,
                     policy_sequence,
@@ -7779,6 +7901,7 @@ pub mod processor {
                 observation_sequence,
                 authority_epoch,
             ),
+            Instruction::MigrateMarketLayoutV2 => handle_migrate_market_layout_v2(program_id, accounts),
             Instruction::UpdateFundingCap {
                 max_abs_funding_e9_per_slot,
                 policy_sequence,
@@ -14078,6 +14201,33 @@ pub mod processor {
         // When it was set (the authority smooths its rate over time from here).
         sequences.maintenance_fee = authenticated_slot;
         write_control_sequences_to_view(&mut group, asset_index_usize, &sequences)?;
+        group.validate_shape().map_err(map_v16_error)
+    }
+
+    /// Tag 73: see `Instruction::MigrateMarketLayoutV2`.
+    #[inline(never)]
+    fn handle_migrate_market_layout_v2<'a>(
+        program_id: &Pubkey,
+        accounts: &'a [AccountInfo<'a>],
+    ) -> ProgramResult {
+        let admin = account(accounts, 0)?;
+        let market_ai = account(accounts, 1)?;
+        expect_signer(admin)?;
+        expect_writable(market_ai)?;
+        expect_owner(market_ai, program_id)?;
+        let (capacity, new_len) = {
+            let data = market_ai.try_borrow_data()?;
+            let (capacity, cfg) = state::layout_v1_market(&data)?;
+            expect_live_authority(&cfg.marketauth, admin.key)?;
+            (capacity, state::market_account_len_for_capacity(capacity)?)
+        };
+        if !Rent::get()?.is_exempt(market_ai.lamports(), new_len) {
+            return Err(ProgramError::AccountNotRentExempt);
+        }
+        market_ai.realloc(new_len, true)?;
+        let mut data = market_ai.try_borrow_mut_data()?;
+        state::migrate_layout_v1_slots_in_place(&mut data, capacity)?;
+        let (_, group) = state::market_view_mut(&mut data)?;
         group.validate_shape().map_err(map_v16_error)
     }
 

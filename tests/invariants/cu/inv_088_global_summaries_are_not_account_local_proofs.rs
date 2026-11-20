@@ -1437,8 +1437,8 @@ fn v16_program_every_wrapper_engine_transition_callsite_has_summary_disposition_
     }
     assert_eq!(
         certificate_disposition_classes,
-        [19, 16, 13, 5],
-        "all 53 wrapper-to-engine callsite classes need an explicit, nonvacuous certificate disposition",
+        [19, 19, 13, 5],
+        "all 56 wrapper-to-engine callsite classes need an explicit, nonvacuous certificate disposition",
     );
     assert_eq!(
         actual, expected,

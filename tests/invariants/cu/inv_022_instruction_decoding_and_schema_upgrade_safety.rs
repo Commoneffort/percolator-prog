@@ -283,11 +283,13 @@ fn inv_022_known_public_tag(tag: u8) -> bool {
             | 68
             | 69
             | 70
+            // Fork (Turbopump): one-shot market layout migration.
+            | 73
     )
 }
 
 fn inv_022_zero_payload_public_tag(tag: u8) -> bool {
-    matches!(tag, 1 | 46 | 54)
+    matches!(tag, 1 | 46 | 54 | 73)
 }
 
 fn inv_022_representative_public_instructions() -> Vec<ProgInstruction> {

@@ -364,6 +364,8 @@ fn public_instruction_corpus() -> Vec<ProgInstruction> {
             amount: 1,
             authority_epoch: 0,
         },
+        // Fork (Turbopump): one-shot market layout migration.
+        ProgInstruction::MigrateMarketLayoutV2,
     ]
 }
 
@@ -507,7 +509,7 @@ fn host_instruction_decoder_rejects_unknown_one_byte_tags() {
         .collect();
     assert_eq!(
         known_tags.len(),
-        50,
+        51,
         "corpus must list every public instruction tag"
     );
 

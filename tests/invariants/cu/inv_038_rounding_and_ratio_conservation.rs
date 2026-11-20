@@ -851,6 +851,14 @@ fn v16_program_truncating_arithmetic_surface_has_a_semantic_owner() {
             class: "POLICY",
             evidence: "v16_program_policy_arithmetic_matches_independent_full_width_corpus",
         },
+        // Fork (Turbopump): the layout migration (tag 73) derives the v1 slot capacity from
+        // the account length and refuses lengths that are not whole v1 slots.
+        RoundingOwner {
+            function: "layout_v1_market",
+            operations: 3,
+            class: "STRUCTURAL",
+            evidence: "INV-022",
+        },
         RoundingOwner {
             function: "live_domain_withdraw_health_or_shutdown_view",
             operations: 2,

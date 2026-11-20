@@ -56,12 +56,12 @@ pinocchio = "0.6"
 arrayref = "0.3"
 num-derive = "0.4"
 num-traits = "0.2"
-percolator = { git = "https://github.com/aeyakovenko/percolator", rev = "c030aa4055b28d7380092388cb4445d5405afb52" }
+percolator = { git = "https://github.com/Commoneffort/percolator", rev = "e026541a64a5f05d984e26046e8b9dbcf2093b3e" }
 anchor-lang-v2 = { git = "https://github.com/solana-foundation/anchor", rev = "e3cf760826fa0a60f247635ea0572e59861ec9b5", package = "anchor-lang-v2", default-features = false, features = ["alloc", "guardrails", "account-resize"], optional = true }
 
 [target.'cfg(not(target_os = "solana"))'.dependencies]
 # Host tests use the same zero-copy account/view API as the SBF/program target.
-percolator = { git = "https://github.com/aeyakovenko/percolator", rev = "c030aa4055b28d7380092388cb4445d5405afb52" }
+percolator = { git = "https://github.com/Commoneffort/percolator", rev = "e026541a64a5f05d984e26046e8b9dbcf2093b3e" }
 
 [dev-dependencies]
 bincode = "1"
@@ -86,8 +86,3 @@ unexpected_cfgs = { level = "warn", check-cfg = [
     'cfg(target_os, values("solana"))',
     'cfg(feature, values("custom-heap", "custom-panic", "idl-build"))',
 ] }
-
-# Speed work (docs/SPEED-FORK.md in percolator-vault): the engine fork's branch, built from the
-# local worktree until its commit is pinned above.
-[patch."https://github.com/aeyakovenko/percolator"]
-percolator = { path = "../_wt_port" }

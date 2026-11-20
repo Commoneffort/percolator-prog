@@ -1635,17 +1635,26 @@ pub(crate) fn assert_source_credit_rates(
             ));
         }
         let available = source_available_backing_num(label, domain, source)?;
-        let expected = if source.positive_claim_bound_num == 0
-            || available >= source.positive_claim_bound_num
-        {
+        // Engine #250: the rate credits UN-LIENED claim face. A valid lien locks at least
+        // as much face as the backing it pledges and locked face draws no soft credit, so
+        // the pledged backing and the same amount of claim bound leave the rate together.
+        let lien_covered = source
+            .valid_liened_backing_num
+            .checked_add(source.valid_liened_insurance_num)
+            .ok_or_else(|| format!("{label} source domain {domain} lien backing overflow"))?;
+        let unliened_claim_bound = source.positive_claim_bound_num.saturating_sub(lien_covered);
+        let expected = if source.positive_claim_bound_num == 0 {
+            CREDIT_RATE_SCALE
+        } else if available == 0 {
+            0
+        } else if available >= unliened_claim_bound {
             CREDIT_RATE_SCALE
         } else {
             super::reference_math::mul_div_floor(
                 available,
                 CREDIT_RATE_SCALE,
-                source.positive_claim_bound_num,
+                unliened_claim_bound,
             )?
-            .min(CREDIT_RATE_SCALE)
         };
         if source.credit_rate_num != expected {
             return Err(format!(
@@ -1654,8 +1663,9 @@ pub(crate) fn assert_source_credit_rates(
                 source.credit_rate_num, source.positive_claim_bound_num
             ));
         }
+        // Soft credit is drawn only by the face that liens do not already cover.
         let usable_positive_credit_num = super::reference_math::mul_div_floor(
-            source.positive_claim_bound_num,
+            unliened_claim_bound,
             source.credit_rate_num,
             CREDIT_RATE_SCALE,
         )?;
@@ -7005,18 +7015,41 @@ impl ScenarioRunner {
             0
         };
         let lapsed_live_backing = if group.mode == MarketModeV16::Live {
-            account
+            // Engine #243: a Live refresh reads the account's roster domains and the
+            // favorable domain `(asset, opposite side)` of every active leg, and expires
+            // one lapsed bucket per call from that set.
+            let mut read_domains = account
                 .source_domains
                 .iter()
                 .filter(|source| source.is_occupied())
-                .filter_map(|source| {
-                    group
-                        .source_backing_buckets
-                        .get(source.domain.get() as usize)
-                })
+                .map(|source| source.domain.get() as usize)
+                .collect::<Vec<_>>();
+            read_domains.extend(
+                decoded_legs(&account)
+                    .into_iter()
+                    .filter(|leg| leg.active)
+                    .map(|leg| {
+                        2 * leg.asset_index as usize + usize::from(leg.side == SideV16::Long)
+                    }),
+            );
+            read_domains.sort_unstable();
+            read_domains.dedup();
+            read_domains
+                .into_iter()
+                .filter_map(|domain| group.source_backing_buckets.get(domain))
                 .filter(|bucket| {
+                    // The engine judges expiry at the slot the crank reaches. Once the
+                    // market is as current as it can get that is the authenticated slot,
+                    // which can be ahead of the committed clock (a Recovery asset does not
+                    // accrue). While catch-up work remains it comes first, and the bucket
+                    // is judged at the committed clock.
                     bucket.status == BackingBucketStatusV16::Fresh
-                        && bucket.expiry_slot <= group.current_slot
+                        && bucket.expiry_slot
+                            <= if market_currentness_lag == 0 {
+                                authenticated_slot.max(group.current_slot)
+                            } else {
+                                group.current_slot
+                            }
                         && (bucket.fresh_unliened_backing_num != 0
                             || bucket.valid_liened_backing_num != 0
                             || bucket.consumed_liened_backing_num != 0
@@ -7026,8 +7059,8 @@ impl ScenarioRunner {
         } else {
             0
         };
-        // Expiry is selected from this portfolio's bounded source-domain roster, so it is
-        // account-scoped Refresh work. Keeping it in the market-lock lane makes the scheduler
+        // Expiry is selected from this portfolio's bounded source-domain roster and its
+        // active legs' favorable domains, so it is account-scoped Refresh work. Keeping it in the market-lock lane makes the scheduler
         // skip the only progressing account whenever another account has stale work.
         stale_legs = stale_legs
             .checked_add(lapsed_live_backing)
@@ -15070,6 +15103,20 @@ fn finish_close_to_partial_receipt_composition(
     );
     runner.run_terminal_payout_campaign()?;
     runner.assert_global_invariants()?;
+    if let Some(terminal_cleanup_slot) = terminal_cleanup_slot {
+        // The open partial receipt waits on fresh source backing. Since wrapper #451 the
+        // provider may withdraw resolved surplus early, but the backing the receipt still
+        // needs to reach full face stays pledged, so the payout campaign can only finish by
+        // letting that backing lapse.
+        if runner.env.current_slot() > terminal_cleanup_slot {
+            return Err(format!(
+                "INV-070 terminal payout could not finish by cleanup slot {terminal_cleanup_slot}: \
+                 the open receipt forced fresh provider backing to lapse at slot {} \
+                 (the receipt still needs that pledged backing, wrapper #451)",
+                runner.env.current_slot()
+            ));
+        }
+    }
     let destination_after = u128::from(
         runner
             .env
@@ -22576,7 +22623,7 @@ pub fn verify_cpi_base_fee_consent(
                     asset_index: ASSET,
                     market_id,
                     size_q,
-                    fee_bps: 0,
+                    fee_bps: INSTALLED_FEE_BPS,
                     limit_price: 0,
                 }],
             ),

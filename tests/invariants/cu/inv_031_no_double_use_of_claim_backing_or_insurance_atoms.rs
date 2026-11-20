@@ -18,6 +18,9 @@
 
 use super::*;
 
+#[path = "inv_031_live_exit_loss_stale_gate.rs"]
+mod live_exit_loss_stale_gate;
+
 fn inv031_source_defines_test(source: &str, function: &str) -> bool {
     let expected = format!("fn {function}");
     let mut test_attribute = false;

@@ -1943,7 +1943,7 @@ pub mod state {
         let header = market_header(data)?;
         let engine_config = header
             .config
-            .try_to_runtime()
+            .try_to_runtime_shape()
             .map_err(map_account_wire_error)?;
         Ok((
             config,
@@ -2468,7 +2468,7 @@ pub mod state {
             market_group_id: wire.market_group_id,
             config: wire
                 .config
-                .try_to_runtime()
+                .try_to_runtime_shape()
                 .map_err(map_account_wire_error)?,
             vault: wire.vault.get(),
             insurance: wire.insurance.get(),
@@ -2910,7 +2910,7 @@ pub mod state {
         let wire = market_header(data)?;
         let engine_config = wire
             .config
-            .try_to_runtime()
+            .try_to_runtime_shape()
             .map_err(map_account_wire_error)?;
         if asset_index >= engine_config.max_market_slots as usize {
             return Err(PercolatorError::InvalidInstruction.into());
@@ -2952,7 +2952,7 @@ pub mod state {
         let wire = market_header(data)?;
         let engine_config = wire
             .config
-            .try_to_runtime()
+            .try_to_runtime_shape()
             .map_err(map_account_wire_error)?;
         if asset_indices.is_empty()
             || asset_indices.len() > engine_config.max_portfolio_assets as usize
